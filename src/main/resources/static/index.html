@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Document Q&A Assistant (RAG)</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+        h1 { font-size: 1.4rem; }
+        section { border: 1px solid #e2e2e2; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+        label { display: block; font-size: 0.85rem; margin-top: 0.5rem; color: #444; }
+        input, textarea, select { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+        button { margin-top: 0.75rem; padding: 0.5rem 1rem; border: 0; background: #2b6cb0; color: #fff; border-radius: 6px; cursor: pointer; }
+        pre { background: #f6f8fa; padding: 0.75rem; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+        .muted { color: #777; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+<h1>Document Q&A Assistant (RAG)</h1>
+<p class="muted">Minimal demo UI. For full API docs see <a href="/swagger-ui.html">Swagger UI</a>.</p>
+
+<label>Tenant ID (X-Tenant-Id)</label>
+<input id="tenant" value="tenant-a"/>
+
+<section>
+    <h2 style="font-size:1.1rem">1. Upload a document</h2>
+    <label>File (PDF, DOCX, TXT, MD)</label>
+    <input type="file" id="file"/>
+    <label>Title (optional)</label>
+    <input id="title"/>
+    <label>Category (optional, e.g. FEES, HR, EXAM, TRANSPORT)</label>
+    <input id="category"/>
+    <button onclick="upload()">Upload</button>
+    <button onclick="listDocs()">Refresh list</button>
+    <pre id="uploadResult"></pre>
+    <pre id="docList"></pre>
+</section>
+
+<section>
+    <h2 style="font-size:1.1rem">2. Ask a question</h2>
+    <label>Question</label>
+    <textarea id="question" rows="2">What is the late fee for term 2?</textarea>
+    <label>Category filter (optional)</label>
+    <input id="askCategory"/>
+    <label>Conversation ID (optional, for follow-ups)</label>
+    <input id="conversationId"/>
+    <button onclick="ask(false)">Ask</button>
+    <button onclick="ask(true)">Ask (streaming)</button>
+    <pre id="answer"></pre>
+    <pre id="sources"></pre>
+</section>
+
+<script>
+    const tenant = () => document.getElementById('tenant').value;
+    const headers = () => ({ 'X-Tenant-Id': tenant() });
+
+    async function upload() {
+        const fileInput = document.getElementById('file');
+        if (!fileInput.files.length) { alert('Choose a file'); return; }
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        if (document.getElementById('title').value) fd.append('title', document.getElementById('title').value);
+        if (document.getElementById('category').value) fd.append('category', document.getElementById('category').value);
+        const res = await fetch('/api/v1/documents', { method: 'POST', headers: headers(), body: fd });
+        document.getElementById('uploadResult').textContent = res.status + ' ' + await res.text();
+    }
+
+    async function listDocs() {
+        const res = await fetch('/api/v1/documents', { headers: headers() });
+        document.getElementById('docList').textContent = JSON.stringify(await res.json(), null, 2);
+    }
+
+    async function ask(stream) {
+        const body = {
+            question: document.getElementById('question').value,
+            category: document.getElementById('askCategory').value || null,
+            conversationId: document.getElementById('conversationId').value || null
+        };
+        document.getElementById('answer').textContent = '';
+        document.getElementById('sources').textContent = '';
+
+        if (!stream) {
+            const res = await fetch('/api/v1/chat', {
+                method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            document.getElementById('answer').textContent = data.answer;
+            document.getElementById('sources').textContent = JSON.stringify(data.sources, null, 2);
+            if (data.conversationId) document.getElementById('conversationId').value = data.conversationId;
+            return;
+        }
+
+        // Streaming via fetch + manual SSE parse.
+        const res = await fetch('/api/v1/chat/stream', {
+            method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split('\n\n');
+            buffer = events.pop();
+            for (const evt of events) {
+                const lines = evt.split('\n');
+                const name = lines.find(l => l.startsWith('event:'))?.slice(6).trim();
+                const data = lines.filter(l => l.startsWith('data:')).map(l => l.slice(5)).join('');
+                if (name === 'token') document.getElementById('answer').textContent += data;
+                else if (name === 'sources') document.getElementById('sources').textContent = data;
+            }
+        }
+    }
+</script>
+</body>
+</html>

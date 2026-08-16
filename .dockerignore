@@ -1,0 +1,10 @@
+target/
+.idea/
+.git/
+.gitignore
+.gitattributes
+*.md
+HELP.md
+.env
+.env.*
+!.env.example

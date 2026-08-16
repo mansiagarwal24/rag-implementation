@@ -1,0 +1,15 @@
+spring:
+  ai:
+    openai:
+      # Tests must run without a real key. Model calls are stubbed at the
+      # LlmClient / EmbeddingClient boundary, so this value is never used.
+      api-key: test-not-used
+
+rag:
+  retrieval:
+    similarity-threshold: 0.5
+  embedding:
+    # No prefixes in tests: the deterministic stub embedder hashes raw words, and prefixes
+    # would add differing tokens to query vs document, skewing similarity.
+    query-prefix: ""
+    document-prefix: ""

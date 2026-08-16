@@ -1,0 +1,118 @@
+spring:
+  application:
+    name: rag-implement
+
+  # Datasource. In docker-compose these are supplied via env vars.
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/ragdb}
+    username: ${SPRING_DATASOURCE_USERNAME:raguser}
+    password: ${SPRING_DATASOURCE_PASSWORD:ragpassword}
+
+  jpa:
+    hibernate:
+      # Never generate/alter schema from entities. schema.sql owns the schema.
+      ddl-auto: update
+    # Run schema.sql after the datasource is set up but before JPA validates/uses it.
+    defer-datasource-initialization: true
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  # Schema is created directly via src/main/resources/schema.sql on startup
+  # (idempotent CREATE ... IF NOT EXISTS). No Flyway/Liquibase.
+  sql:
+    init:
+      mode: always
+
+  # Upload limits. Enforced again in code to return clean 413s.
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+  threads:
+    virtual:
+      enabled: true
+
+  # Spring AI: provider is swappable via config. Default provider = local Ollama.
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_CHAT_MODEL:qwen2.5:7b}
+          temperature: ${LLM_TEMPERATURE:0.1}
+      embedding:
+        options:
+          model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+      init:
+        # Auto-pull models on startup if they're not already present locally.
+        pull-model-strategy: ${OLLAMA_PULL_STRATEGY:when_missing}
+    vectorstore:
+      pgvector:
+        # We own the schema via schema.sql, so disable Spring AI's auto schema init.
+        initialize-schema: false
+
+# Application-specific RAG configuration. All tunables live here, never hardcoded.
+rag:
+  provider: ${LLM_PROVIDER:openai}
+  embedding:
+    # nomic-embed-text = 768 dims. If you swap the embedding model, update this
+    # AND the vector(...) dimension in schema.sql to match.
+    dimensions: ${EMBEDDING_DIMENSIONS:768}
+    batch-size: ${EMBEDDING_BATCH_SIZE:32}
+    # nomic-embed-text is trained with task prefixes. These are prepended ONLY to the
+    # text sent to the embedder (not stored/displayed). Set to empty for models that
+    # don't use prefixes (e.g. OpenAI).
+    query-prefix: "${EMBEDDING_QUERY_PREFIX:search_query: }"
+    document-prefix: "${EMBEDDING_DOCUMENT_PREFIX:search_document: }"
+  chunking:
+    max-chars: ${CHUNK_MAX_CHARS:1000}
+    overlap-chars: ${CHUNK_OVERLAP_CHARS:150}
+  retrieval:
+    top-k: ${RETRIEVAL_TOP_K:8}
+    similarity-threshold: ${RETRIEVAL_SIMILARITY_THRESHOLD:0}
+  conversation:
+    max-turns: ${CONVERSATION_MAX_TURNS:6}
+    max-history-tokens: ${CONVERSATION_MAX_HISTORY_TOKENS:1500}
+  upload:
+    max-file-size-bytes: ${UPLOAD_MAX_BYTES:20971520} # 20 MB
+  llm:
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:30}
+    retry:
+      max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:3}
+      initial-backoff-millis: ${LLM_RETRY_INITIAL_BACKOFF_MS:500}
+      backoff-multiplier: ${LLM_RETRY_BACKOFF_MULTIPLIER:2.0}
+    circuit-breaker:
+      failure-threshold: ${LLM_CB_FAILURE_THRESHOLD:5}
+      open-millis: ${LLM_CB_OPEN_MS:15000}
+  refusal-message: "The requested information was not found in the available documents."
+  # Rough OpenAI pricing used only for cost estimates in metrics (USD per 1K tokens).
+  cost:
+    embedding-per-1k-tokens: ${COST_EMBEDDING_PER_1K:0.00002}
+    chat-input-per-1k-tokens: ${COST_CHAT_INPUT_PER_1K:0.00015}
+    chat-output-per-1k-tokens: ${COST_CHAT_OUTPUT_PER_1K:0.0006}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    # Custom indicator reports model provider reachability.
+    defaults:
+      enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    # Correlation id + tenant id are pushed into MDC and appear in every log line.
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [cid=%X{correlationId} tenant=%X{tenantId}] %logger{36} - %msg%n"
