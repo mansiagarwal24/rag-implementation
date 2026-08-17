@@ -361,13 +361,3 @@ Honest list of gaps and shortcuts, with what I'd do given more time.
    `schema.sql` is the source of truth.
 
 ---
-
-## 18. One thing that surprised me
-
-How much the embedding model's **task prefixes** mattered. Before adding `search_query:` /
-`search_document:` for `nomic-embed-text`, a question about one school's fees would retrieve a
-different school's fee table as the top hit. The prefixes are a small, almost invisible change, but
-they flipped retrieval from "confidently wrong document" to "correct document at 0.77 similarity."
-It was a good reminder that with local/open embedding models, following the model's exact training
-convention can matter more than tuning thresholds or chunk sizes.
-```
